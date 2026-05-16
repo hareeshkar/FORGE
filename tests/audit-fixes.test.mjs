@@ -166,3 +166,14 @@ test("builder renders the chat history sidebar and creates fresh sessions", () =
   assert.match(sidebar, /\+ New chat/);
   assert.match(sidebar, /Previous 7 days/);
 });
+
+test("agent guide links current MiniMax harness capability matrix", () => {
+  const guide = read("FORGE.md");
+  const matrix = read("docs/research/minimax-agent-harness-capability-matrix.md");
+
+  assert.match(guide, /minimax-agent-harness-capability-matrix\.md/);
+  assert.match(matrix, /chatcompletion_v2/);
+  assert.match(matrix, /tool-call arguments/);
+  assert.match(matrix, /projected streaming/);
+  assert.match(matrix, /clean-room/);
+});

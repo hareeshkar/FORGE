@@ -199,6 +199,8 @@ Key invariants:
 
 This section is the up-to-date research; it supersedes the older `docs/minimax-api-findings.md` and `docs/minimax-api-reference.md` for anything that conflicts. All facts here were re-verified on **May 16, 2026** against the live MiniMax docs index (`https://platform.minimax.io/docs/llms.txt`) via Context7, plus the M2 model card on Hugging Face.
 
+For harness-specific capability decisions, see [`docs/research/minimax-agent-harness-capability-matrix.md`](./docs/research/minimax-agent-harness-capability-matrix.md).
+
 ### 5.1 Endpoint & auth
 
 | Item | Value |
