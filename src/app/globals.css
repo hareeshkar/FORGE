@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+:root {
+  --forge-bg: #070604;
+  --forge-panel: #141210;
+  --forge-edge: #4a3628;
+  --forge-fg: #f6efe6;
+  --forge-muted: #9a8b7c;
+  --forge-molt: #ea580c;
+  --forge-ember: #fbbf24;
+  --background: var(--forge-bg);
+  --foreground: var(--forge-fg);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-mono: var(--font-geist-mono);
+}
+
+.font-forge-display {
+  font-family: var(--font-forge-display), system-ui, sans-serif;
+}
+
+.font-forge-body {
+  font-family: var(--font-forge-body), Georgia, ui-serif, serif;
+}
+
+body {
+  background: var(--forge-bg);
+  color: var(--forge-fg);
+}
+
+/* Atmospheric grain — industrial forge slab */
+.forge-app::before {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.forge-chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--forge-molt) 35%, transparent) transparent;
+}
+
+@keyframes forgeFade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.forge-msg-enter {
+  animation: forgeFade 0.45s ease-out both;
+}
+
+.sp-layout,
+.sp-preview,
+.sp-preview-container,
+.sp-preview-iframe {
+  height: 100% !important;
+  min-height: 0 !important;
+  border-radius: 0 !important;
+}
+
+/* Generating pulse dots */
+@keyframes forgePulse {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40%            { opacity: 1;   transform: scale(1); }
+}
+
+.forge-dot-pulse {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--forge-molt);
+  animation: forgePulse 1.2s ease-in-out infinite;
+}
