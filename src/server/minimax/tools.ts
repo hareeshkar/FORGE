@@ -122,6 +122,55 @@ export function applyStringReplacements(content: string, replacements: StringRep
   return { ok: true, content: next, changedCount: replacements.length };
 }
 
+export function projectToolFileUpdate(
+  name: string,
+  args: Record<string, unknown>,
+  store: ProjectFileStore
+): { ok: true; file: ProjectFile } | { ok: false; error: string } {
+  switch (name) {
+    case "create_file": {
+      const path = String(args.path ?? "");
+      const content = String(args.content ?? "");
+      if (!path) return { ok: false, error: "create_file requires path and content." };
+      if (store.read(path)) return { ok: false, error: `${path} already exists.` };
+      return { ok: true, file: { name: path, content, language: inferLanguage(path) } };
+    }
+
+    case "edit_file": {
+      const path = String(args.path ?? "");
+      const oldStr = String(args.old_string ?? "");
+      const newStr = String(args.new_string ?? "");
+      const file = path ? store.read(path) : undefined;
+      if (!path || !oldStr || !file) return { ok: false, error: "edit_file cannot be projected." };
+      const occurrences = file.content.split(oldStr).length - 1;
+      if (occurrences !== 1) return { ok: false, error: `edit_file expected one match, found ${occurrences}.` };
+      return { ok: true, file: { ...file, content: file.content.replace(oldStr, newStr) } };
+    }
+
+    case "replace_strings": {
+      const path = String(args.path ?? "");
+      const file = path ? store.read(path) : undefined;
+      const replacements = Array.isArray(args.replacements)
+        ? args.replacements.map((item) => {
+            const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+            return {
+              old_string: String(record.old_string ?? ""),
+              new_string: String(record.new_string ?? ""),
+            };
+          })
+        : [];
+      if (!path || !file) return { ok: false, error: "replace_strings cannot be projected." };
+      const result = applyStringReplacements(file.content, replacements);
+      return result.ok
+        ? { ok: true, file: { ...file, content: result.content } }
+        : { ok: false, error: result.error ?? "replace_strings failed." };
+    }
+
+    default:
+      return { ok: false, error: "Tool does not produce a file update." };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool schemas — exactly what M2.7 receives in the `tools` array
 // ---------------------------------------------------------------------------

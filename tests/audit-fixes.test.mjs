@@ -56,6 +56,19 @@ test("agent streams file content chunks before final file update", () => {
   assert.match(agentLoop, /type:\s*"file_stream_chunk"/);
 });
 
+test("agent streams projected tool edits as soon as tool args arrive", () => {
+  const agentLoop = read("src/server/minimax/agentLoop.ts");
+  const tools = read("src/server/minimax/tools.ts");
+
+  assert.match(agentLoop, /streamProjectedToolUpdate/);
+  assert.match(tools, /applyStringReplacements/);
+  assert.match(agentLoop, /const streamedPreview = await streamProjectedToolUpdate\(toolName, args, store, emit\)/);
+  assert.match(agentLoop, /if \(!streamedPreview\)/);
+  assert.match(agentLoop, /case "create_file"/);
+  assert.match(agentLoop, /case "edit_file"/);
+  assert.match(agentLoop, /case "replace_strings"/);
+});
+
 test("client routes streamed chunks to a live editor update handler", () => {
   const hook = read("src/hooks/useGenerate.ts");
   const builder = read("src/components/layout/ForgeBuilder.tsx");
@@ -65,6 +78,14 @@ test("client routes streamed chunks to a live editor update handler", () => {
   assert.match(hook, /case "file_stream_chunk"/);
   assert.match(builder, /onFileStreamUpdate:/);
   assert.match(builder, /setMainView\("code"\)/);
+});
+
+test("code editor shows a non-blocking live streaming state", () => {
+  const editor = read("src/components/editor/CodeEditor.tsx");
+
+  assert.match(editor, /Streaming generated code/);
+  assert.match(editor, /readOnly:\s*isGenerating/);
+  assert.doesNotMatch(editor, /pointer-events-none absolute inset-0/);
 });
 
 test("preview panel wires Sandpack diagnostics bridge", () => {

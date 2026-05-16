@@ -1,6 +1,6 @@
 import type { ForgeSSEEvent, ProjectFile } from "@/lib/types";
 import { minimaxPost } from "./client";
-import { executeTool, FORGE_TOOLS, ProjectFileStore } from "./tools";
+import { executeTool, FORGE_TOOLS, projectToolFileUpdate, ProjectFileStore } from "./tools";
 
 // ---------------------------------------------------------------------------
 // Internal message types — OpenAI-compatible, accepted by MiniMax M2.7
@@ -151,12 +151,16 @@ export async function runAgentLoop(params: {
         args,
       });
 
+      const streamedPreview = await streamProjectedToolUpdate(toolName, args, store, emit);
+
       // Run the tool
       const result = await executeTool(toolName, args, store, emit);
 
       // If a file changed, stream it to the client immediately
       if (result.fileUpdate) {
-        await streamFileUpdate(result.fileUpdate, emit);
+        if (!streamedPreview) {
+          await streamFileUpdate(result.fileUpdate, emit);
+        }
         await emit({ type: "file_update", file: result.fileUpdate });
         filesChanged.add(result.fileUpdate.name);
       }
@@ -183,6 +187,26 @@ export async function runAgentLoop(params: {
   }
 
   return { summary, filesChanged: Array.from(filesChanged) };
+}
+
+async function streamProjectedToolUpdate(
+  toolName: string,
+  args: Record<string, unknown>,
+  store: ProjectFileStore,
+  emit: Emit
+): Promise<boolean> {
+  switch (toolName) {
+    case "create_file":
+    case "edit_file":
+    case "replace_strings": {
+      const preview = projectToolFileUpdate(toolName, args, store);
+      if (!preview.ok) return false;
+      await streamFileUpdate(preview.file, emit);
+      return true;
+    }
+    default:
+      return false;
+  }
 }
 
 async function streamFileUpdate(file: ProjectFile, emit: Emit): Promise<void> {

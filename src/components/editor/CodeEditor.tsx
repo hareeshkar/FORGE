@@ -29,8 +29,12 @@ export function CodeEditor({ file, onChange, isGenerating, isChanged }: Props) {
         </div>
       )}
       {isGenerating && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#0a0a0a]/60 backdrop-blur-[1px]">
-          <span className="animate-pulse text-sm text-orange-400">FORGE is building…</span>
+        <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between border-b border-orange-800/40 bg-[#120c06]/85 px-4 py-1.5 text-[11px] text-orange-300 shadow-[0_8px_30px_rgba(0,0,0,0.25)] backdrop-blur">
+          <span className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-orange-400" />
+            Streaming generated code
+          </span>
+          <span className="font-mono text-[10px] text-orange-200/70">{file.name}</span>
         </div>
       )}
       <MonacoEditor
@@ -46,8 +50,10 @@ export function CodeEditor({ file, onChange, isGenerating, isChanged }: Props) {
           scrollBeyondLastLine: false,
           wordWrap: "on",
           automaticLayout: true,
-          padding: { top: 16 },
+          padding: { top: isGenerating || isChanged ? 40 : 16 },
           fontFamily: "var(--font-geist-mono), 'JetBrains Mono', monospace",
+          readOnly: isGenerating,
+          domReadOnly: isGenerating,
         }}
       />
     </div>

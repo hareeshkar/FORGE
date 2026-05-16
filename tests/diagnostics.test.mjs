@@ -111,3 +111,48 @@ test("replace_strings rejects ambiguous or missing replacements without partial 
   assert.equal(missing.ok, false);
   assert.match(missing.error, /not found/);
 });
+
+test("replace_strings can project replacements without mutating the original file", () => {
+  const store = new editTools.ProjectFileStore([
+    file("app.js", "var label = 'Old';\nconsole.log(label);"),
+  ]);
+  const original = store.read("app.js").content;
+  const projected = editTools.projectToolFileUpdate("replace_strings", {
+    path: "app.js",
+    replacements: [
+      { old_string: "'Old'", new_string: "'New'" },
+      { old_string: "console.log(label);", new_string: "document.body.textContent = label;" },
+    ],
+  }, store);
+
+  assert.equal(projected.ok, true);
+  assert.equal(projected.file.name, "app.js");
+  assert.match(projected.file.content, /'New'/);
+  assert.equal(store.read("app.js").content, original);
+});
+
+test("create_file and edit_file projection validate exact matches before streaming", () => {
+  const store = new editTools.ProjectFileStore([
+    file("index.html", "<main>Old</main>", "html"),
+  ]);
+  const created = editTools.projectToolFileUpdate("create_file", {
+    path: "extra.css",
+    content: "body { color: red; }",
+  }, store);
+  const edited = editTools.projectToolFileUpdate("edit_file", {
+    path: "index.html",
+    old_string: "Old",
+    new_string: "New",
+  }, store);
+  const missing = editTools.projectToolFileUpdate("edit_file", {
+    path: "index.html",
+    old_string: "Missing",
+    new_string: "New",
+  }, store);
+
+  assert.equal(created.ok, true);
+  assert.equal(created.file.name, "extra.css");
+  assert.equal(edited.ok, true);
+  assert.equal(edited.file.content, "<main>New</main>");
+  assert.equal(missing.ok, false);
+});
