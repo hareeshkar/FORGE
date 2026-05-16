@@ -46,3 +46,104 @@ export function projectToolFileUpdate(
       return { ok: false, error: "Tool does not produce a file update.", toolName: name };
   }
 }
+
+type PartialStringValue = { value: string; complete: boolean };
+
+function extractPartialStringValue(source: string, key: string): PartialStringValue | null {
+  const keyIndex = source.indexOf(`"${key}"`);
+  if (keyIndex === -1) return null;
+
+  const colonIndex = source.indexOf(":", keyIndex + key.length + 2);
+  if (colonIndex === -1) return null;
+
+  let quoteIndex = colonIndex + 1;
+  while (quoteIndex < source.length && /\s/.test(source[quoteIndex])) quoteIndex += 1;
+  if (source[quoteIndex] !== '"') return null;
+
+  let value = "";
+  for (let i = quoteIndex + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '"') return { value, complete: true };
+    if (ch !== "\\") {
+      value += ch;
+      continue;
+    }
+
+    if (i + 1 >= source.length) return { value, complete: false };
+    const escaped = source[i + 1];
+    i += 1;
+    switch (escaped) {
+      case '"':
+      case "\\":
+      case "/":
+        value += escaped;
+        break;
+      case "b":
+        value += "\b";
+        break;
+      case "f":
+        value += "\f";
+        break;
+      case "n":
+        value += "\n";
+        break;
+      case "r":
+        value += "\r";
+        break;
+      case "t":
+        value += "\t";
+        break;
+      case "u": {
+        const hex = source.slice(i + 1, i + 5);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          value += String.fromCharCode(Number.parseInt(hex, 16));
+          i += 4;
+        }
+        break;
+      }
+      default:
+        value += escaped;
+    }
+  }
+
+  return { value, complete: false };
+}
+
+export function projectLiveToolArgumentUpdate(
+  name: string,
+  partialArguments: string,
+  store: ProjectFileStore
+): ProjectFile | null {
+  switch (name) {
+    case "create_file": {
+      const path = extractPartialStringValue(partialArguments, "path");
+      const content = extractPartialStringValue(partialArguments, "content");
+      if (!path?.complete || !path.value || !content) return null;
+      return {
+        name: path.value,
+        content: content.value,
+        language: inferLanguage(path.value),
+      };
+    }
+
+    case "edit_file": {
+      const path = extractPartialStringValue(partialArguments, "path");
+      const oldString = extractPartialStringValue(partialArguments, "old_string");
+      const newString = extractPartialStringValue(partialArguments, "new_string");
+      if (!path?.complete || !oldString?.complete || !newString) return null;
+
+      const file = store.read(path.value);
+      if (!file) return null;
+
+      const occurrences = file.content.split(oldString.value).length - 1;
+      if (occurrences !== 1) return null;
+      return {
+        ...file,
+        content: file.content.replace(oldString.value, newString.value),
+      };
+    }
+
+    default:
+      return null;
+  }
+}

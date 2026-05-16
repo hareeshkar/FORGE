@@ -157,13 +157,17 @@ When M2.7 returns an assistant message during a tool loop, the `content` field c
      │                                  │ POST /v1/text/chatcompletion_v2
      │                                  │ { model:"MiniMax-M2.7",
      │                                  │   messages, tools, tool_choice:"auto",
-     │                                  │   temperature:1.0, max_tokens:8192 }
+     │                                  │   stream:true,
+     │                                  │   temperature:1.0,
+     │                                  │   max_completion_tokens:10240 }
      │                                  ▼
      │                         ┌─────────────────────┐
      │                         │   MiniMax M2.7      │
      │                         │   (api.minimax.io)  │
      │                         └────────┬────────────┘
-     │                                  │  message.tool_calls[]
+     │                                  │  streamed delta.tool_calls[]
+     │                                  │  → live Monaco preview when safe
+     │                                  │  → assembled message.tool_calls[]
      │                                  ▼
      │                         ┌─────────────────────┐
      │  tool_call_start ◄──── │   executeTool()      │ ──┐
@@ -191,7 +195,8 @@ Key invariants:
 
 - **`maxTurns: 12`** is a hard cap. Each tool call is one round-trip. Long edits can exhaust this on complex projects — the loop has a graceful exit: if the model errors *after* at least one successful file edit, the loop returns `Updated <files>.` instead of throwing.
 - **Tool calls are executed sequentially** in a `for` loop. M2.7 can return multiple `tool_calls` in one response (parallel function calling), but FORGE walks them one at a time so each result can be fed back in order. This is safe but not optimal for read-only tools.
-- **Per-call timeout is 120 s.** Client timeout in `useGenerate.ts` is **240 s** — meaning the client can give up while the agent is still mid-loop. Be aware when modifying timeouts.
+- **MiniMax streaming is live and authoritative execution is still local.** `minimaxStream()` consumes `stream:true` SSE chunks, assembles the final assistant message/tool calls for history, and emits live editor previews only from safe partial `create_file` / `edit_file` arguments. The completed tool call is still executed by `executeTool()`, and `file_update` remains the authoritative commit event.
+- **Per-call timeout is 120 s.** Client timeout in `useGenerate.ts` is **25 min** — enough for the 12-turn server loop plus buffer. Be aware when modifying timeouts.
 
 ---
 
@@ -264,7 +269,7 @@ Source: <https://platform.minimax.io/docs/api-reference/text-post> (OpenAPI spec
 | Is M2.7 tool calling OpenAI-compatible? | **Yes**, on `/v1/text/chatcompletion_v2`. The `tools[].type=function`, `tools[].function.{name,description,parameters}`, and `tool_calls[].function.{name,arguments}` shape is exactly the OpenAI shape. |
 | `tool_choice` options? | **Only `"none"` and `"auto"`.** `"required"` and `{ type:"function", function:{name} }` (OpenAI's forced-call forms) are NOT in the OpenAPI enum. Current `"auto"` is correct. |
 | Parallel tool calls? | **Yes** — `message.tool_calls` is an array and the model can emit multiple invocations in one turn (internally via XML `<minimax:tool_call>` containing multiple `<invoke>` blocks). FORGE walks them sequentially, which is safe; switching to `Promise.all` for read-only tools (`list_files`, `read_file`, `search_web`) would shave latency on multi-tool turns. |
-| Streaming with tools? | **Technically yes** (`stream: true` is supported), **but tool-call deltas are buffered** — they arrive in the final chunk, not incrementally. This was a documented vLLM/MiniMax bug fixed in vllm-project/vllm#40253 (April 2026) for the open-weights model, but the hosted API still buffers. FORGE's non-streaming approach is the right call until MiniMax fixes the hosted SSE path. |
+| Streaming with tools? | **Yes** (`stream: true` is supported). FORGE now consumes streamed chunks and supports OpenAI-style incremental `delta.tool_calls` argument assembly. If a hosted response buffers tool-call args, FORGE falls back to projected streaming once complete args arrive. |
 | Recommended `temperature` for tool calling? | **`1.0`** — explicitly listed as the recommended default for M2 in the OpenAPI (`temperature.description: "MiniMax-M2: recommended 1.0"`). The OpenAI guidance of `0–0.3` does NOT apply. Valid range is `(0, 1]`; `0` is a hard error. Current `1.0` is correct — **do not lower it**. |
 | Context window? | **204,800 tokens** for the entire M2 family (M2, M2.1, M2.5, M2.7, and `-highspeed` variants). With FORGE's 12-turn cap × 8 KB output + full file history, you're nowhere near the cap — typical loops use 5–20 K tokens. |
 | Recommended `top_p`? | **`0.95`** for M2 (OpenAPI default). FORGE doesn't set it, which is fine — the server uses the default. |

@@ -53,6 +53,22 @@ export async function emitFileStream(emit: Emit, file: ProjectFile): Promise<voi
   await emit({ type: "file_stream_done", file });
 }
 
+export async function emitFileStreamStart(emit: Emit, file: ProjectFile): Promise<void> {
+  await emit({ type: "file_stream_start", file: { ...file, content: "" } });
+}
+
+export async function emitFileStreamChunk(
+  emit: Emit,
+  fileName: string,
+  chunk: string
+): Promise<void> {
+  await emit({ type: "file_stream_chunk", fileName, chunk });
+}
+
+export async function emitFileStreamDone(emit: Emit, file: ProjectFile): Promise<void> {
+  await emit({ type: "file_stream_done", file });
+}
+
 export async function emitFileUpdate(emit: Emit, file: ProjectFile): Promise<void> {
   await emit({ type: "file_update", file });
 }

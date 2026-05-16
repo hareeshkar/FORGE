@@ -9,6 +9,7 @@ const editTools = await loadTsModule("../src/server/minimax/tools.ts");
 const toolProjection = await loadTsModule("../src/server/minimax/toolProjection.ts");
 const agentLoop = await loadTsModule("../src/server/minimax/agentLoop.ts");
 const harnessEvents = await loadTsModule("../src/server/minimax/harnessEvents.ts");
+const minimaxStreaming = await loadTsModule("../src/server/minimax/streaming.ts");
 const streamUpdateBatcher = await loadTsModule("../src/hooks/streamUpdateBatcher.ts");
 
 const file = (name, content, language = "javascript") => ({ name, content, language });
@@ -112,6 +113,62 @@ test("harness phase helper emits private timing events", async () => {
       elapsedMs: 42,
     },
   ]);
+});
+
+test("MiniMax stream parser reads SSE data chunks and raw JSON arrays", () => {
+  const sse = 'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n' +
+    'data: [{"choices":[{"delta":{"content":"lo"}}]}]\n\n' +
+    "data: [DONE]\n\n";
+  const parsed = minimaxStreaming.parseMiniMaxStreamEvents(sse);
+
+  assert.equal(parsed.remainder, "");
+  assert.equal(parsed.events.length, 2);
+  assert.equal(parsed.events[0].choices[0].delta.content, "Hel");
+  assert.equal(parsed.events[1].choices[0].delta.content, "lo");
+});
+
+test("MiniMax stream accumulator assembles tool-call argument deltas", () => {
+  const state = minimaxStreaming.createMiniMaxStreamAccumulator();
+
+  minimaxStreaming.applyMiniMaxStreamEvent(state, {
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              id: "call_1",
+              type: "function",
+              function: { name: "create_file", arguments: '{"path":"styles.css",' },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  minimaxStreaming.applyMiniMaxStreamEvent(state, {
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              function: { arguments: '"content":"body { color: red; }"}' },
+            },
+          ],
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+  });
+
+  const response = minimaxStreaming.finalizeMiniMaxStreamResponse(state);
+  assert.equal(response.choices[0].finish_reason, "tool_calls");
+  assert.equal(response.choices[0].message.tool_calls[0].function.name, "create_file");
+  assert.equal(
+    response.choices[0].message.tool_calls[0].function.arguments,
+    '{"path":"styles.css","content":"body { color: red; }"}'
+  );
 });
 
 test("stream update batcher coalesces chunks per scheduler frame", () => {
@@ -224,6 +281,73 @@ test("replace_strings can project replacements without mutating the original fil
   assert.equal(projected.file.name, "app.js");
   assert.match(projected.file.content, /'New'/);
   assert.equal(store.read("app.js").content, original);
+});
+
+test("live tool argument projection previews partial generated file content", () => {
+  const store = new editTools.ProjectFileStore([]);
+  const preview = toolProjection.projectLiveToolArgumentUpdate(
+    "create_file",
+    '{"path":"styles.css","content":"body {\\n  color: orange;',
+    store
+  );
+
+  assert.ok(preview);
+  assert.equal(preview.name, "styles.css");
+  assert.equal(preview.content, "body {\n  color: orange;");
+  assert.equal(preview.language, "css");
+});
+
+test("live edit_file projection previews partial replacement without mutating store", () => {
+  const store = new editTools.ProjectFileStore([
+    file("app.js", "var title = 'Old';\ndocument.body.textContent = title;"),
+  ]);
+  const preview = toolProjection.projectLiveToolArgumentUpdate(
+    "edit_file",
+    `{"path":"app.js","old_string":"var title = 'Old';","new_string":"var title = 'New`,
+    store
+  );
+
+  assert.ok(preview);
+  assert.match(preview.content, /var title = 'New/);
+  assert.equal(store.read("app.js").content, "var title = 'Old';\ndocument.body.textContent = title;");
+});
+
+test("live preview chunker restarts non-append-only edits", () => {
+  const chunker = agentLoop.createLivePreviewChunker();
+  const first = chunker.next("call_1", {
+    name: "app.js",
+    language: "javascript",
+    content: "prefix NEW suffix",
+  });
+  const second = chunker.next("call_1", {
+    name: "app.js",
+    language: "javascript",
+    content: "prefix NEWER suffix",
+  });
+
+  assert.equal(first.mode, "start");
+  assert.equal(first.chunk, "prefix NEW suffix");
+  assert.equal(second.mode, "restart");
+  assert.equal(second.chunk, "prefix NEWER suffix");
+});
+
+test("live preview chunker appends for true generated suffixes", () => {
+  const chunker = agentLoop.createLivePreviewChunker();
+  const first = chunker.next("call_1", {
+    name: "styles.css",
+    language: "css",
+    content: "body {",
+  });
+  const second = chunker.next("call_1", {
+    name: "styles.css",
+    language: "css",
+    content: "body { color: orange;",
+  });
+
+  assert.equal(first.mode, "start");
+  assert.equal(first.chunk, "body {");
+  assert.equal(second.mode, "append");
+  assert.equal(second.chunk, " color: orange;");
 });
 
 test("tool projection reports stable unsafe edit reason", () => {

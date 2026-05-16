@@ -1,7 +1,23 @@
 import type { ForgeSSEEvent } from "@/lib/types";
-import { minimaxPost } from "./client";
-import { emitFileStream, emitFileUpdate, emitHarnessPhase, emitToolCallResult, emitToolCallStart } from "./harnessEvents";
-import { projectToolFileUpdate } from "./toolProjection";
+import { minimaxStream } from "./client";
+import {
+  emitFileStream,
+  emitFileStreamChunk,
+  emitFileStreamDone,
+  emitFileStreamStart,
+  emitFileUpdate,
+  emitHarnessPhase,
+  emitToolCallResult,
+  emitToolCallStart,
+} from "./harnessEvents";
+import { projectLiveToolArgumentUpdate, projectToolFileUpdate } from "./toolProjection";
+import {
+  applyMiniMaxStreamEvent,
+  createMiniMaxStreamAccumulator,
+  finalizeMiniMaxStreamResponse,
+  parseMiniMaxStreamEvents,
+  type MiniMaxStreamEvent,
+} from "./streaming";
 import { executeTool, FORGE_TOOLS, ProjectFileStore } from "./tools";
 
 // ---------------------------------------------------------------------------
@@ -93,6 +109,7 @@ export async function runAgentLoop(params: {
   ];
 
   const filesChanged = new Set<string>();
+  const livePreviewedToolCalls = new Set<string>();
   let summary = "Done.";
 
   for (let turn = 0; turn < maxTurns; turn++) {
@@ -100,7 +117,9 @@ export async function runAgentLoop(params: {
     const modelCallStartedAt = Date.now();
     await emitHarnessPhase(emit, "model_call", "Model call started");
     try {
-      resp = await minimaxPost<M27Response>(
+      const streamState = createMiniMaxStreamAccumulator();
+      const livePreviewChunker = createLivePreviewChunker();
+      await minimaxStream<MiniMaxStreamEvent>(
         "/v1/text/chatcompletion_v2",
         {
           model: "MiniMax-M2.7",
@@ -110,8 +129,21 @@ export async function runAgentLoop(params: {
           temperature: 1.0,
           max_completion_tokens: 10_240,
         },
+        async (event) => {
+          applyMiniMaxStreamEvent(streamState, event);
+          await emitLiveToolPreview(
+            streamState,
+            store,
+            emit,
+            livePreviewChunker,
+            livePreviewedToolCalls
+          );
+        },
+        parseMiniMaxStreamEvents,
         120_000 // 2-minute per-call timeout
       );
+      resp = finalizeMiniMaxStreamResponse(streamState);
+      await endLiveToolPreviews(streamState, store, emit, livePreviewChunker);
       await emitHarnessPhase(
         emit,
         "model_call",
@@ -167,7 +199,8 @@ export async function runAgentLoop(params: {
 
       const projectionStartedAt = Date.now();
       await emitHarnessPhase(emit, "tool_projection", "Tool projection started");
-      const streamedPreview = await streamProjectedToolUpdate(toolName, args, store, emit);
+      const streamedPreview = livePreviewedToolCalls.has(tc.id)
+        || await streamProjectedToolUpdate(toolName, args, store, emit);
       await emitHarnessPhase(
         emit,
         "tool_projection",
@@ -216,6 +249,86 @@ export async function runAgentLoop(params: {
   }
 
   return { summary, filesChanged: Array.from(filesChanged) };
+}
+
+async function emitLiveToolPreview(
+  state: ReturnType<typeof createMiniMaxStreamAccumulator>,
+  store: ProjectFileStore,
+  emit: Emit,
+  livePreviewChunker: LivePreviewChunker,
+  livePreviewedToolCalls: Set<string>
+): Promise<void> {
+  for (const call of state.toolCalls.values()) {
+    if (!call.function.name || !call.function.arguments) continue;
+    const preview = projectLiveToolArgumentUpdate(
+      call.function.name,
+      call.function.arguments,
+      store
+    );
+    if (!preview) continue;
+    const next = livePreviewChunker.next(call.id, preview);
+    if (!next) continue;
+    if (next.mode === "start" || next.mode === "restart") {
+      await emitFileStreamStart(emit, preview);
+    }
+    await emitFileStreamChunk(emit, preview.name, next.chunk);
+    livePreviewedToolCalls.add(call.id);
+  }
+}
+
+type LivePreviewChunk =
+  | { mode: "start"; chunk: string }
+  | { mode: "append"; chunk: string }
+  | { mode: "restart"; chunk: string };
+
+type LivePreviewChunker = ReturnType<typeof createLivePreviewChunker>;
+
+export function createLivePreviewChunker() {
+  const previousContent = new Map<string, string>();
+
+  return {
+    next(callId: string, file: { content: string }): LivePreviewChunk | null {
+      const previous = previousContent.get(callId);
+      if (previous === file.content) return null;
+
+      previousContent.set(callId, file.content);
+      if (previous === undefined) {
+        return file.content ? { mode: "start", chunk: file.content } : null;
+      }
+
+      if (file.content.startsWith(previous)) {
+        return { mode: "append", chunk: file.content.slice(previous.length) };
+      }
+
+      return { mode: "restart", chunk: file.content };
+    },
+    has(callId: string): boolean {
+      return previousContent.has(callId);
+    },
+    delete(callId: string): void {
+      previousContent.delete(callId);
+    },
+  };
+}
+
+async function endLiveToolPreviews(
+  state: ReturnType<typeof createMiniMaxStreamAccumulator>,
+  store: ProjectFileStore,
+  emit: Emit,
+  livePreviewChunker: LivePreviewChunker
+): Promise<void> {
+  for (const call of state.toolCalls.values()) {
+    if (!livePreviewChunker.has(call.id)) continue;
+
+    const preview = projectLiveToolArgumentUpdate(
+      call.function.name,
+      call.function.arguments,
+      store
+    );
+    livePreviewChunker.delete(call.id);
+    if (!preview) continue;
+    await emitFileStreamDone(emit, preview);
+  }
 }
 
 async function streamProjectedToolUpdate(

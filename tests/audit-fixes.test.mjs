@@ -116,11 +116,27 @@ test("agent streams projected tool edits as soon as tool args arrive", () => {
   assert.match(projection, /export type ProjectedToolUpdate/);
   assert.match(projection, /export function projectToolFileUpdate/);
   assert.match(agentLoop, /from "\.\/toolProjection"/);
-  assert.match(agentLoop, /const streamedPreview = await streamProjectedToolUpdate\(toolName, args, store, emit\)/);
+  assert.match(agentLoop, /streamProjectedToolUpdate\(toolName, args, store, emit\)/);
   assert.match(agentLoop, /if \(!streamedPreview\)/);
   assert.match(agentLoop, /case "create_file"/);
   assert.match(agentLoop, /case "edit_file"/);
   assert.match(agentLoop, /case "replace_strings"/);
+});
+
+test("agent uses MiniMax streaming deltas for live tool argument previews", () => {
+  const client = read("src/server/minimax/client.ts");
+  const streaming = read("src/server/minimax/streaming.ts");
+  const agentLoop = read("src/server/minimax/agentLoop.ts");
+  const projection = read("src/server/minimax/toolProjection.ts");
+
+  assert.match(client, /minimaxStream/);
+  assert.match(client, /stream:\s*true/);
+  assert.match(streaming, /applyMiniMaxStreamEvent/);
+  assert.match(streaming, /finalizeMiniMaxStreamResponse/);
+  assert.match(agentLoop, /minimaxStream/);
+  assert.match(agentLoop, /projectLiveToolArgumentUpdate/);
+  assert.match(agentLoop, /emitLiveToolPreview/);
+  assert.match(projection, /projectLiveToolArgumentUpdate/);
 });
 
 test("client routes streamed chunks to a live editor update handler", () => {

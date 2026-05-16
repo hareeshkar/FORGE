@@ -75,3 +75,61 @@ export async function minimaxPost<T>(
     clearTimeout(timer);
   }
 }
+
+export async function minimaxStream<T>(
+  path: string,
+  body: Record<string, unknown>,
+  onEvent: (event: T) => Promise<void> | void,
+  parseEvents: (input: string) => { events: T[]; remainder: string },
+  timeoutMs = 30_000
+): Promise<void> {
+  const key = process.env.MINIMAX_API_KEY;
+  if (!key) throw new Error("MINIMAX_API_KEY is not set");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ ...body, stream: true }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`MiniMax HTTP ${res.status}: ${text.slice(0, 300)}`);
+    }
+    if (!res.body) throw new Error("MiniMax streaming response had no body");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parsed = parseEvents(buffer);
+      buffer = parsed.remainder;
+      for (const event of parsed.events) {
+        const baseResp = (event as { base_resp?: { status_code: number; status_msg: string } }).base_resp;
+        if (baseResp && baseResp.status_code !== 0) {
+          throw new MiniMaxError(baseResp.status_code, baseResp.status_msg);
+        }
+        await onEvent(event);
+      }
+    }
+
+    const final = parseEvents(`${buffer}\n\n`);
+    for (const event of final.events) {
+      await onEvent(event);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}

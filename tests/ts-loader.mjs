@@ -34,6 +34,8 @@ ${stripped.replace(/import .*?;\n/g, "")}`;
 }
 ${tools}
 ${stripped.replace(/import .*?;\n/g, "")}`;
+  } else if (path.endsWith("agentLoop.ts")) {
+    stripped = stripped.replace(/import[\s\S]*?from ".*?";\n/g, "");
   } else {
     stripped = stripped.replace(/import .*?;\n/g, "");
   }
