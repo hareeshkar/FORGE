@@ -9,6 +9,7 @@ const editTools = await loadTsModule("../src/server/minimax/tools.ts");
 const toolProjection = await loadTsModule("../src/server/minimax/toolProjection.ts");
 const agentLoop = await loadTsModule("../src/server/minimax/agentLoop.ts");
 const harnessEvents = await loadTsModule("../src/server/minimax/harnessEvents.ts");
+const streamUpdateBatcher = await loadTsModule("../src/hooks/streamUpdateBatcher.ts");
 
 const file = (name, content, language = "javascript") => ({ name, content, language });
 
@@ -111,6 +112,67 @@ test("harness phase helper emits private timing events", async () => {
       elapsedMs: 42,
     },
   ]);
+});
+
+test("stream update batcher coalesces chunks per scheduler frame", () => {
+  const callbacks = [];
+  const emitted = [];
+  const batcher = streamUpdateBatcher.createStreamUpdateBatcher((cb) => {
+    callbacks.push(cb);
+    return callbacks.length;
+  });
+
+  batcher.schedule({ name: "app.js", language: "javascript", content: "a" }, (file) => {
+    emitted.push(file);
+  });
+  batcher.schedule({ name: "app.js", language: "javascript", content: "ab" }, (file) => {
+    emitted.push(file);
+  });
+
+  assert.equal(emitted.length, 0);
+  assert.equal(callbacks.length, 1);
+  callbacks[0]();
+  assert.deepEqual(emitted.map((file) => file.content), ["ab"]);
+});
+
+test("stream update batcher flushes pending updates synchronously", () => {
+  const callbacks = [];
+  const emitted = [];
+  const batcher = streamUpdateBatcher.createStreamUpdateBatcher((cb) => {
+    callbacks.push(cb);
+    return callbacks.length;
+  });
+
+  batcher.schedule({ name: "index.html", language: "html", content: "<main>" }, (file) => {
+    emitted.push(file);
+  });
+  batcher.flush();
+
+  assert.deepEqual(emitted.map((file) => file.content), ["<main>"]);
+  assert.equal(callbacks.length, 1);
+});
+
+test("stream update batcher ignores stale scheduled callbacks after manual flush", () => {
+  const callbacks = [];
+  const emitted = [];
+  const batcher = streamUpdateBatcher.createStreamUpdateBatcher((cb) => {
+    callbacks.push(cb);
+    return callbacks.length;
+  });
+
+  batcher.schedule({ name: "app.js", language: "javascript", content: "first" }, (file) => {
+    emitted.push(file);
+  });
+  batcher.flush();
+  batcher.schedule({ name: "app.js", language: "javascript", content: "second" }, (file) => {
+    emitted.push(file);
+  });
+
+  callbacks[0]();
+  assert.deepEqual(emitted.map((file) => file.content), ["first"]);
+
+  callbacks[1]();
+  assert.deepEqual(emitted.map((file) => file.content), ["first", "second"]);
 });
 
 test("diagnostic status resolves clean after Sandpack settle timeout", async () => {

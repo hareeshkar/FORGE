@@ -134,6 +134,25 @@ test("client routes streamed chunks to a live editor update handler", () => {
   assert.match(builder, /setMainView\("code"\)/);
 });
 
+test("streamed file updates are frame-batched to avoid UI thrash", () => {
+  const hook = read("src/hooks/useGenerate.ts");
+  const batcher = read("src/hooks/streamUpdateBatcher.ts");
+
+  assert.match(hook, /createStreamUpdateBatcher/);
+  assert.match(hook, /pendingStreamUpdates/);
+  assert.match(batcher, /requestAnimationFrame/);
+  assert.match(batcher, /setTimeout/);
+  assert.match(batcher, /pendingStreamUpdates/);
+});
+
+test("final streamed file events flush pending chunks before final content", () => {
+  const hook = read("src/hooks/useGenerate.ts");
+
+  assert.match(hook, /case "file_stream_done"[\s\S]*flushPendingStreamUpdates\(\)[\s\S]*streamBuffers\.delete/);
+  assert.match(hook, /case "file_update"[\s\S]*flushPendingStreamUpdates\(\)[\s\S]*onFileUpdate\(event\.file\)/);
+  assert.doesNotMatch(hook, /case "file_stream_chunk"[\s\S]*onFileStreamUpdate\?\(next\)/);
+});
+
 test("code editor shows a non-blocking live streaming state", () => {
   const editor = read("src/components/editor/CodeEditor.tsx");
 

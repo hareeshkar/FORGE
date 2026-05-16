@@ -9,6 +9,7 @@ import type {
   ProjectFile,
   ResearchSource,
 } from "@/lib/types";
+import { createStreamUpdateBatcher } from "./streamUpdateBatcher";
 
 export type GenerateHandlers = {
   onFileUpdate: (file: ProjectFile) => void;
@@ -39,6 +40,7 @@ export function useGenerate() {
     const searchedQueries: string[] = [];
     const sourcesByQuery = new Map<string, string[]>();
     const streamBuffers = new Map<string, ProjectFile>();
+    const pendingStreamUpdates = createStreamUpdateBatcher();
 
     try {
       const ac = new AbortController();
@@ -84,6 +86,7 @@ export function useGenerate() {
                 searchedQueries,
                 sourcesByQuery,
                 streamBuffers,
+                pendingStreamUpdates,
               });
             } catch {
               /* partial JSON */
@@ -119,6 +122,7 @@ function handleEvent(
     searchedQueries: string[];
     sourcesByQuery: Map<string, string[]>;
     streamBuffers: Map<string, ProjectFile>;
+    pendingStreamUpdates: ReturnType<typeof createStreamUpdateBatcher>;
   }
 ) {
   const {
@@ -131,7 +135,9 @@ function handleEvent(
     searchedQueries,
     sourcesByQuery,
     streamBuffers,
+    pendingStreamUpdates,
   } = ctx;
+  const flushPendingStreamUpdates = pendingStreamUpdates.flush;
 
   switch (event.type) {
     case "search_start":
@@ -161,6 +167,7 @@ function handleEvent(
       // Observability-only for now; avoid chat spam until a debug UI exists.
       break;
     case "file_stream_start":
+      flushPendingStreamUpdates();
       streamBuffers.set(event.file.name, event.file);
       onFileStreamUpdate?.(event.file);
       break;
@@ -169,14 +176,16 @@ function handleEvent(
       if (!prev) break;
       const next = { ...prev, content: `${prev.content}${event.chunk}` };
       streamBuffers.set(event.fileName, next);
-      onFileStreamUpdate?.(next);
+      pendingStreamUpdates.schedule(next, onFileStreamUpdate);
       break;
     }
     case "file_stream_done":
+      flushPendingStreamUpdates();
       streamBuffers.delete(event.file.name);
       onFileStreamUpdate?.(event.file);
       break;
     case "file_update":
+      flushPendingStreamUpdates();
       onFileUpdate(event.file);
       break;
     case "image_hint":
