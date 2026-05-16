@@ -56,11 +56,12 @@ TOOL STRATEGY (follow this order):
 1. list_files → understand what exists
 2. read_file → get exact content before any edit
 3. search_web → look up current docs before writing library-specific code
-4. edit_file → surgical change (old_string must appear exactly once)
-5. create_file → only for brand-new files
-6. When ALL changes are done, write a concise one-sentence summary and stop calling tools.
+4. replace_strings → preferred for several small exact replacements in one file; atomic, no partial writes
+5. edit_file → surgical single replacement (old_string must appear exactly once)
+6. create_file → only for brand-new files
+7. When ALL changes are done, write a concise one-sentence summary and stop calling tools.
 
-IMPORTANT: edit_file requires old_string to match byte-for-byte. If it fails, use read_file again to get the exact text.`;
+IMPORTANT: edit_file and replace_strings require old_string to match byte-for-byte. If either fails, use read_file again to get exact text.`;
 
 // ---------------------------------------------------------------------------
 // Agent loop — runs multi-turn M2.7 with tools until done or maxTurns

@@ -67,6 +67,59 @@ test("client routes streamed chunks to a live editor update handler", () => {
   assert.match(builder, /setMainView\("code"\)/);
 });
 
+test("preview panel wires Sandpack diagnostics bridge", () => {
+  const preview = read("src/components/preview/PreviewPanel.tsx");
+  const bridge = read("src/components/preview/SandpackDiagnosticsBridge.tsx");
+
+  assert.match(preview, /SandpackDiagnosticsBridge/);
+  assert.match(preview, /onDiagnosticsChange/);
+  assert.match(bridge, /useSandpack\(/);
+  assert.match(bridge, /useSandpackConsole/);
+  assert.match(bridge, /analyzeStaticDiagnostics/);
+  assert.match(bridge, /action === "show-error"/);
+  assert.match(bridge, /event === "test_end"/);
+});
+
+test("preview panel renders diagnostic panel with manual fix action", () => {
+  const preview = read("src/components/preview/PreviewPanel.tsx");
+  const panel = read("src/components/preview/DiagnosticPanel.tsx");
+
+  assert.match(preview, /DiagnosticPanel/);
+  assert.match(preview, /onFixDiagnostics/);
+  assert.match(panel, /Fix with AI/);
+  assert.match(panel, /Clean/);
+  assert.match(panel, /Checking/);
+  assert.match(panel, /Fixing pass/);
+});
+
+test("builder runs guarded automatic diagnostic repair loop", () => {
+  const builder = read("src/components/layout/ForgeBuilder.tsx");
+
+  assert.match(builder, /MAX_AUTO_REPAIR_PASSES\s*=\s*12/);
+  assert.match(builder, /MAX_REPEATED_DIAGNOSTIC_PASSES\s*=\s*2/);
+  assert.match(builder, /seenRepairFingerprints/);
+  assert.match(builder, /repairRepeatCounts/);
+  assert.match(builder, /formatDiagnosticRepairPrompt/);
+  assert.match(builder, /mode:\s*"fix-bug"/);
+  assert.match(builder, /Diagnostics found/);
+  assert.match(builder, /Preview healed after pass/);
+  assert.match(builder, /repeated diagnostic fingerprint/);
+  assert.doesNotMatch(builder, /Still failing after \$\{MAX_AUTO_REPAIR_PASSES\} passes/);
+  assert.match(builder, /onFixDiagnostics/);
+});
+
+test("agent exposes targeted multi-replacement editing tool", () => {
+  const tools = read("src/server/minimax/tools.ts");
+  const agentLoop = read("src/server/minimax/agentLoop.ts");
+  const hook = read("src/hooks/useGenerate.ts");
+
+  assert.match(tools, /name:\s*"replace_strings"/);
+  assert.match(tools, /replacements/);
+  assert.match(tools, /applyStringReplacements/);
+  assert.match(agentLoop, /replace_strings/);
+  assert.match(hook, /case "replace_strings"/);
+});
+
 test("chat sessions are first-class persisted records", () => {
   const types = read("src/lib/types.ts");
   const storage = read("src/lib/storage/sessionStore.ts");

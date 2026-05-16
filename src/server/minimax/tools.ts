@@ -13,7 +13,16 @@ export type ToolDefinition = {
     description: string;
     parameters: {
       type: "object";
-      properties: Record<string, { type: string; description: string; enum?: string[] }>;
+      properties: Record<string, {
+        type: string;
+        description?: string;
+        enum?: string[];
+        items?: {
+          type: string;
+          properties?: Record<string, { type: string; description?: string }>;
+          required?: string[];
+        };
+      }>;
       required: string[];
     };
   };
@@ -71,6 +80,47 @@ export type ToolResult = {
 };
 
 type Emit = (event: ForgeSSEEvent) => Promise<void>;
+
+type StringReplacement = {
+  old_string: string;
+  new_string: string;
+};
+
+export function applyStringReplacements(content: string, replacements: StringReplacement[]): {
+  ok: boolean;
+  content: string;
+  error?: string;
+  changedCount: number;
+} {
+  if (replacements.length === 0) {
+    return { ok: false, content, error: "replace_strings requires at least one replacement.", changedCount: 0 };
+  }
+
+  for (const [index, replacement] of replacements.entries()) {
+    if (!replacement.old_string) {
+      return { ok: false, content, error: `Replacement ${index + 1} is missing old_string.`, changedCount: 0 };
+    }
+    const occurrences = content.split(replacement.old_string).length - 1;
+    if (occurrences === 0) {
+      return { ok: false, content, error: `Replacement ${index + 1} old_string not found.`, changedCount: 0 };
+    }
+    if (occurrences > 1) {
+      return {
+        ok: false,
+        content,
+        error: `Replacement ${index + 1} old_string appears ${occurrences} times. Include more context or use edit_file.`,
+        changedCount: 0,
+      };
+    }
+  }
+
+  let next = content;
+  for (const replacement of replacements) {
+    next = next.replace(replacement.old_string, replacement.new_string);
+  }
+
+  return { ok: true, content: next, changedCount: replacements.length };
+}
 
 // ---------------------------------------------------------------------------
 // Tool schemas — exactly what M2.7 receives in the `tools` array
@@ -130,6 +180,44 @@ export const FORGE_TOOLS: ToolDefinition[] = [
           },
         },
         required: ["path", "old_string", "new_string"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "replace_strings",
+      description:
+        "Apply multiple exact string replacements to one existing file atomically. " +
+        "Use this for build-fix passes when several small syntax/import/style fixes are needed in the same file. " +
+        "Every old_string must appear exactly once, or no changes are applied.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Filename to edit, e.g. app.js or index.html",
+          },
+          replacements: {
+            type: "array",
+            description: "Ordered exact replacements to apply atomically.",
+            items: {
+              type: "object",
+              properties: {
+                old_string: {
+                  type: "string",
+                  description: "Exact text to replace. Must appear exactly once.",
+                },
+                new_string: {
+                  type: "string",
+                  description: "Replacement text.",
+                },
+              },
+              required: ["old_string", "new_string"],
+            },
+          },
+        },
+        required: ["path", "replacements"],
       },
     },
   },
@@ -274,6 +362,40 @@ export async function executeTool(
       return {
         ok: true,
         content: `Applied edit to ${path}.`,
+        fileUpdate: updated,
+      };
+    }
+
+    case "replace_strings": {
+      const path = String(args.path ?? "");
+      const replacements = Array.isArray(args.replacements)
+        ? args.replacements.map((item) => {
+            const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+            return {
+              old_string: String(record.old_string ?? ""),
+              new_string: String(record.new_string ?? ""),
+            };
+          })
+        : [];
+
+      if (!path) {
+        return { ok: false, content: "replace_strings requires path and replacements." };
+      }
+
+      const file = store.read(path);
+      if (!file) {
+        return { ok: false, content: `File not found: ${path}. Use list_files to see what exists.` };
+      }
+
+      const result = applyStringReplacements(file.content, replacements);
+      if (!result.ok) {
+        return { ok: false, content: result.error ?? "replace_strings failed." };
+      }
+
+      const updated = store.write(path, result.content);
+      return {
+        ok: true,
+        content: `Applied ${result.changedCount} replacements to ${path}.`,
         fileUpdate: updated,
       };
     }

@@ -223,6 +223,8 @@ function formatToolCallLabel(toolName: string, args: Record<string, unknown>): s
       return `→ read_file(${String(args.path ?? "")})`;
     case "edit_file":
       return `→ edit_file(${String(args.path ?? "")})`;
+    case "replace_strings":
+      return `→ replace_strings(${String(args.path ?? "")})`;
     case "create_file":
       return `→ create_file(${String(args.path ?? "")})`;
     case "search_web":

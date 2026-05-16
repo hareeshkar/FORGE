@@ -7,12 +7,19 @@ import {
   SandpackPreview,
 } from "@codesandbox/sandpack-react";
 import type { ProjectFile } from "@/lib/types";
+import type { DiagnosticBatch, RepairStatus } from "@/lib/diagnostics/types";
 import { toSandpackFiles } from "@/lib/preview/toSandpackFiles";
+import { DiagnosticPanel } from "./DiagnosticPanel";
+import { SandpackDiagnosticsBridge } from "./SandpackDiagnosticsBridge";
 
 type DeviceMode = "mobile" | "tablet" | "desktop";
 
 type Props = {
   files: ProjectFile[];
+  diagnostics?: DiagnosticBatch | null;
+  repairStatus?: RepairStatus;
+  onDiagnosticsChange?: (batch: DiagnosticBatch) => void;
+  onFixDiagnostics?: () => void;
 };
 
 const DEVICE_WIDTHS: Record<DeviceMode, number | null> = {
@@ -60,7 +67,13 @@ const DEVICE_LABELS: Record<DeviceMode, string> = {
   desktop: "Desktop",
 };
 
-export function PreviewPanel({ files }: Props) {
+export function PreviewPanel({
+  files,
+  diagnostics,
+  repairStatus,
+  onDiagnosticsChange,
+  onFixDiagnostics,
+}: Props) {
   const sandpackFiles = useMemo(() => toSandpackFiles(files), [files]);
   const [device, setDevice] = useState<DeviceMode>("desktop");
 
@@ -74,6 +87,7 @@ export function PreviewPanel({ files }: Props) {
       options={{ autorun: true, recompileMode: "immediate" }}
       style={{ height: "100%", display: "flex", flexDirection: "column" }}
     >
+      <SandpackDiagnosticsBridge files={files} onDiagnosticsChange={onDiagnosticsChange} />
       {/* Toolbar */}
       <div
         style={{
@@ -114,6 +128,7 @@ export function PreviewPanel({ files }: Props) {
       {/* Preview area */}
       <div
         style={{
+          position: "relative",
           flex: 1,
           minHeight: 0,
           overflow: "hidden",
@@ -140,6 +155,11 @@ export function PreviewPanel({ files }: Props) {
             />
           </SandpackLayout>
         </div>
+        <DiagnosticPanel
+          diagnostics={diagnostics}
+          repairStatus={repairStatus}
+          onFixDiagnostics={onFixDiagnostics}
+        />
       </div>
     </SandpackProvider>
   );

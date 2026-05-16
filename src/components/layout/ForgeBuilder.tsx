@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import TemplateStarters from "@/components/chat/TemplateStarters";
 import type { PromptPayload } from "@/components/chat/ChatInput";
@@ -10,6 +10,8 @@ import { PreviewPanel } from "@/components/preview/PreviewPanel";
 import { ChatHistorySidebar } from "@/components/session/ChatHistorySidebar";
 import { useGenerate } from "@/hooks/useGenerate";
 import { useSessions } from "@/hooks/useSessions";
+import { formatDiagnosticRepairPrompt } from "@/lib/diagnostics/repairPrompt";
+import type { DiagnosticBatch, RepairStatus } from "@/lib/diagnostics/types";
 import { downloadProjectZip } from "@/lib/export/zipExport";
 import { openInCodeSandbox } from "@/lib/export/openInCodeSandbox";
 import type { ImageHint, ResearchSource } from "@/lib/types";
@@ -19,6 +21,9 @@ function escapeRegExp(s: string): string {
 }
 
 type MainView = "preview" | "code";
+
+const MAX_AUTO_REPAIR_PASSES = 12;
+const MAX_REPEATED_DIAGNOSTIC_PASSES = 2;
 
 export function ForgeBuilder() {
   const {
@@ -46,6 +51,16 @@ export function ForgeBuilder() {
   const [changedFiles, setChangedFiles] = useState<Set<string>>(new Set());
   const [backendMode, setBackendMode] = useState<"loading" | "live" | "demo">("loading");
   const [exportError, setExportError] = useState<string | null>(null);
+  const [latestDiagnostics, setLatestDiagnostics] = useState<DiagnosticBatch | null>(null);
+  const [awaitingDiagnostics, setAwaitingDiagnostics] = useState(false);
+  const [autoRepairPass, setAutoRepairPass] = useState(0);
+  const [repairStatus, setRepairStatus] = useState<RepairStatus>({
+    state: "idle",
+    pass: 0,
+    maxPasses: MAX_AUTO_REPAIR_PASSES,
+  });
+  const seenRepairFingerprints = useRef<Set<string>>(new Set());
+  const repairRepeatCounts = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
@@ -75,9 +90,150 @@ export function ForgeBuilder() {
     [patchFileContent]
   );
 
+  const resetRepairLoop = useCallback(() => {
+    seenRepairFingerprints.current.clear();
+    repairRepeatCounts.current.clear();
+    setLatestDiagnostics(null);
+    setAwaitingDiagnostics(false);
+    setAutoRepairPass(0);
+    setRepairStatus({ state: "idle", pass: 0, maxPasses: MAX_AUTO_REPAIR_PASSES });
+  }, []);
+
+  const launchDiagnosticRepair = useCallback(
+    (batch: DiagnosticBatch, manual = false) => {
+      if (!project || isGenerating || batch.blockingCount === 0) return;
+
+      const fingerprint = batch.fingerprint ?? "";
+      const repeatCount = fingerprint ? (repairRepeatCounts.current.get(fingerprint) ?? 0) + 1 : 0;
+      if (!manual && fingerprint && repeatCount > MAX_REPEATED_DIAGNOSTIC_PASSES) {
+        setRepairStatus({
+          state: "stopped",
+          pass: autoRepairPass,
+          maxPasses: MAX_AUTO_REPAIR_PASSES,
+          message: "Stopped after repeated diagnostic fingerprint.",
+        });
+        addMessage({
+          role: "system",
+          content: "Still failing after repeated diagnostic fingerprint; review diagnostics or ask for a different approach.",
+        });
+        return;
+      }
+
+      if (!manual && autoRepairPass >= MAX_AUTO_REPAIR_PASSES) {
+        setRepairStatus({
+          state: "stopped",
+          pass: autoRepairPass,
+          maxPasses: MAX_AUTO_REPAIR_PASSES,
+          message: `Emergency stop after ${MAX_AUTO_REPAIR_PASSES} repair passes.`,
+        });
+        addMessage({
+          role: "system",
+          content: `Emergency stop after ${MAX_AUTO_REPAIR_PASSES} repair passes; review diagnostics or ask for a different approach.`,
+        });
+        return;
+      }
+
+      if (fingerprint) {
+        seenRepairFingerprints.current.add(fingerprint);
+        repairRepeatCounts.current.set(fingerprint, repeatCount);
+      }
+      const nextPass = manual ? autoRepairPass + 1 : autoRepairPass + 1;
+      setAutoRepairPass(nextPass);
+      setRepairStatus({
+        state: "fixing",
+        pass: nextPass,
+        maxPasses: MAX_AUTO_REPAIR_PASSES,
+        message: `Fixing pass ${nextPass}/${MAX_AUTO_REPAIR_PASSES}`,
+      });
+      addMessage({
+        role: "system",
+        content: `Diagnostics found ${batch.blockingCount} blocking error${batch.blockingCount === 1 ? "" : "s"}; starting auto-repair pass ${nextPass}/${MAX_AUTO_REPAIR_PASSES}.`,
+      });
+
+      void generate(
+        {
+          prompt: formatDiagnosticRepairPrompt({
+            diagnostics: batch.diagnostics,
+            files: project.files,
+            pass: nextPass,
+            maxPasses: MAX_AUTO_REPAIR_PASSES,
+          }),
+          currentFiles: project.files,
+          mode: "fix-bug",
+          researchMode,
+        },
+        {
+          onFileUpdate: (file) => {
+            upsertFile(file);
+            setMainView("preview");
+          },
+          onFileStreamUpdate: (file) => {
+            upsertFile(file);
+            setMainView("code");
+          },
+          onChatMessage: addMessage,
+          onSearchResult: (result) => setResearchEntries((prev) => [...prev, result]),
+          onImageResolved: applyImageHint,
+          onDone: (files) => {
+            setChangedFiles(new Set(files));
+            setAwaitingDiagnostics(true);
+          },
+        }
+      );
+    },
+    [
+      addMessage,
+      applyImageHint,
+      autoRepairPass,
+      generate,
+      isGenerating,
+      project,
+      researchMode,
+      upsertFile,
+    ]
+  );
+
+  const handleDiagnosticsChange = useCallback(
+    (batch: DiagnosticBatch) => {
+      setLatestDiagnostics(batch);
+      if (!awaitingDiagnostics || batch.status === "checking") return;
+
+      setAwaitingDiagnostics(false);
+      if (batch.blockingCount === 0) {
+        if (autoRepairPass > 0) {
+          setRepairStatus({
+            state: "healed",
+            pass: autoRepairPass,
+            maxPasses: MAX_AUTO_REPAIR_PASSES,
+            message: `Preview healed after pass ${autoRepairPass}.`,
+          });
+          addMessage({
+            role: "system",
+            content: `Preview healed after pass ${autoRepairPass}.`,
+          });
+        } else {
+          setRepairStatus({ state: "idle", pass: 0, maxPasses: MAX_AUTO_REPAIR_PASSES });
+        }
+        seenRepairFingerprints.current.clear();
+        setAutoRepairPass(0);
+        return;
+      }
+
+      launchDiagnosticRepair(batch);
+    },
+    [addMessage, autoRepairPass, awaitingDiagnostics, launchDiagnosticRepair]
+  );
+
+  const handleFixDiagnostics = useCallback(() => {
+    if (latestDiagnostics) {
+      launchDiagnosticRepair(latestDiagnostics, true);
+    }
+  }, [latestDiagnostics, launchDiagnosticRepair]);
+
   const handleSubmit = useCallback(
     (payload: PromptPayload) => {
       if (!project) return;
+      resetRepairLoop();
       addMessage({ role: "user", content: payload.prompt });
       setResearchEntries([]);
       setChangedFiles(new Set());
@@ -103,11 +259,14 @@ export function ForgeBuilder() {
           onChatMessage: addMessage,
           onSearchResult: (result) => setResearchEntries((prev) => [...prev, result]),
           onImageResolved: applyImageHint,
-          onDone: (files) => setChangedFiles(new Set(files)),
+          onDone: (files) => {
+            setChangedFiles(new Set(files));
+            setAwaitingDiagnostics(true);
+          },
         }
       );
     },
-    [project, messages.length, researchMode, generate, addMessage, upsertFile, applyImageHint]
+    [project, messages.length, researchMode, generate, addMessage, upsertFile, applyImageHint, resetRepairLoop]
   );
 
   const handleTemplateSelect = useCallback(
@@ -123,9 +282,10 @@ export function ForgeBuilder() {
     setExportError(null);
     setResearchEntries([]);
     setChangedFiles(new Set());
+    resetRepairLoop();
     setMainView("preview");
     createSession();
-  }, [isGenerating, createSession]);
+  }, [isGenerating, createSession, resetRepairLoop]);
 
   const handleOpenSession = useCallback(
     (id: string) => {
@@ -136,10 +296,11 @@ export function ForgeBuilder() {
       setExportError(null);
       setResearchEntries([]);
       setChangedFiles(new Set());
+      resetRepairLoop();
       setMainView("preview");
       openSession(id);
     },
-    [isGenerating, openSession]
+    [isGenerating, openSession, resetRepairLoop]
   );
 
   const handleDownloadZip = useCallback(async () => {
@@ -401,7 +562,13 @@ export function ForgeBuilder() {
             </div>
           </div>
           <div className={`absolute inset-0 transition-opacity duration-150 ${mainView === "preview" ? "z-10 opacity-100" : "pointer-events-none z-0 opacity-0"}`}>
-            <PreviewPanel files={project.files} />
+            <PreviewPanel
+              files={project.files}
+              diagnostics={latestDiagnostics}
+              repairStatus={repairStatus}
+              onDiagnosticsChange={handleDiagnosticsChange}
+              onFixDiagnostics={handleFixDiagnostics}
+            />
           </div>
         </div>
       </main>
