@@ -1,7 +1,8 @@
 import type { ForgeSSEEvent } from "@/lib/types";
 import { minimaxPost } from "./client";
 import { emitFileStream, emitFileUpdate, emitToolCallResult, emitToolCallStart } from "./harnessEvents";
-import { executeTool, FORGE_TOOLS, projectToolFileUpdate, ProjectFileStore } from "./tools";
+import { projectToolFileUpdate } from "./toolProjection";
+import { executeTool, FORGE_TOOLS, ProjectFileStore } from "./tools";
 
 // ---------------------------------------------------------------------------
 // Internal message types — OpenAI-compatible, accepted by MiniMax M2.7

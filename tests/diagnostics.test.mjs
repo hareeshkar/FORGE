@@ -6,6 +6,7 @@ const diagnostics = await loadTsModule("../src/lib/diagnostics/staticChecks.ts")
 const fingerprinting = await loadTsModule("../src/lib/diagnostics/fingerprint.ts");
 const repairPrompt = await loadTsModule("../src/lib/diagnostics/repairPrompt.ts");
 const editTools = await loadTsModule("../src/server/minimax/tools.ts");
+const toolProjection = await loadTsModule("../src/server/minimax/toolProjection.ts");
 const agentLoop = await loadTsModule("../src/server/minimax/agentLoop.ts");
 
 const file = (name, content, language = "javascript") => ({ name, content, language });
@@ -126,7 +127,7 @@ test("replace_strings can project replacements without mutating the original fil
     file("app.js", "var label = 'Old';\nconsole.log(label);"),
   ]);
   const original = store.read("app.js").content;
-  const projected = editTools.projectToolFileUpdate("replace_strings", {
+  const projected = toolProjection.projectToolFileUpdate("replace_strings", {
     path: "app.js",
     replacements: [
       { old_string: "'Old'", new_string: "'New'" },
@@ -140,20 +141,35 @@ test("replace_strings can project replacements without mutating the original fil
   assert.equal(store.read("app.js").content, original);
 });
 
+test("tool projection reports stable unsafe edit reason", () => {
+  const store = new editTools.ProjectFileStore([
+    file("app.js", "var x = 1;\nvar x = 1;"),
+  ]);
+  const projected = toolProjection.projectToolFileUpdate("edit_file", {
+    path: "app.js",
+    old_string: "var x = 1;",
+    new_string: "var x = 2;",
+  }, store);
+
+  assert.equal(projected.ok, false);
+  assert.equal(projected.toolName, "edit_file");
+  assert.match(projected.error, /expected one match/);
+});
+
 test("create_file and edit_file projection validate exact matches before streaming", () => {
   const store = new editTools.ProjectFileStore([
     file("index.html", "<main>Old</main>", "html"),
   ]);
-  const created = editTools.projectToolFileUpdate("create_file", {
+  const created = toolProjection.projectToolFileUpdate("create_file", {
     path: "extra.css",
     content: "body { color: red; }",
   }, store);
-  const edited = editTools.projectToolFileUpdate("edit_file", {
+  const edited = toolProjection.projectToolFileUpdate("edit_file", {
     path: "index.html",
     old_string: "Old",
     new_string: "New",
   }, store);
-  const missing = editTools.projectToolFileUpdate("edit_file", {
+  const missing = toolProjection.projectToolFileUpdate("edit_file", {
     path: "index.html",
     old_string: "Missing",
     new_string: "New",
@@ -164,4 +180,42 @@ test("create_file and edit_file projection validate exact matches before streami
   assert.equal(edited.ok, true);
   assert.equal(edited.file.content, "<main>New</main>");
   assert.equal(missing.ok, false);
+});
+
+test("tool projection matches execution file updates for write tools", async () => {
+  const cases = [
+    {
+      name: "create_file",
+      initial: [],
+      args: { path: "extra.css", content: "body { color: red; }" },
+    },
+    {
+      name: "edit_file",
+      initial: [file("index.html", "<main>Old</main>", "html")],
+      args: { path: "index.html", old_string: "Old", new_string: "New" },
+    },
+    {
+      name: "replace_strings",
+      initial: [file("app.js", "var label = 'Old';\nconsole.log(label);")],
+      args: {
+        path: "app.js",
+        replacements: [
+          { old_string: "'Old'", new_string: "'New'" },
+          { old_string: "console.log(label);", new_string: "document.body.textContent = label;" },
+        ],
+      },
+    },
+  ];
+
+  for (const entry of cases) {
+    const projectionStore = new editTools.ProjectFileStore(entry.initial);
+    const executionStore = new editTools.ProjectFileStore(entry.initial);
+    const projected = toolProjection.projectToolFileUpdate(entry.name, entry.args, projectionStore);
+    const executed = await editTools.executeTool(entry.name, entry.args, executionStore, async () => {});
+
+    assert.equal(projected.ok, true);
+    assert.equal(projected.toolName, entry.name);
+    assert.equal(executed.ok, true);
+    assert.deepEqual(projected.file, executed.fileUpdate);
+  }
 });

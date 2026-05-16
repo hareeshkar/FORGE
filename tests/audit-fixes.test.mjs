@@ -92,10 +92,12 @@ test("agent loop preserves MiniMax reasoning in model history only", () => {
 
 test("agent streams projected tool edits as soon as tool args arrive", () => {
   const agentLoop = read("src/server/minimax/agentLoop.ts");
-  const tools = read("src/server/minimax/tools.ts");
+  const projection = read("src/server/minimax/toolProjection.ts");
 
   assert.match(agentLoop, /streamProjectedToolUpdate/);
-  assert.match(tools, /applyStringReplacements/);
+  assert.match(projection, /export type ProjectedToolUpdate/);
+  assert.match(projection, /export function projectToolFileUpdate/);
+  assert.match(agentLoop, /from "\.\/toolProjection"/);
   assert.match(agentLoop, /const streamedPreview = await streamProjectedToolUpdate\(toolName, args, store, emit\)/);
   assert.match(agentLoop, /if \(!streamedPreview\)/);
   assert.match(agentLoop, /case "create_file"/);
