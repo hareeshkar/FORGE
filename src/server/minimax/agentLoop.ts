@@ -1,6 +1,6 @@
 import type { ForgeSSEEvent } from "@/lib/types";
 import { minimaxPost } from "./client";
-import { emitFileStream, emitFileUpdate, emitToolCallResult, emitToolCallStart } from "./harnessEvents";
+import { emitFileStream, emitFileUpdate, emitHarnessPhase, emitToolCallResult, emitToolCallStart } from "./harnessEvents";
 import { projectToolFileUpdate } from "./toolProjection";
 import { executeTool, FORGE_TOOLS, ProjectFileStore } from "./tools";
 
@@ -97,6 +97,8 @@ export async function runAgentLoop(params: {
 
   for (let turn = 0; turn < maxTurns; turn++) {
     let resp: M27Response;
+    const modelCallStartedAt = Date.now();
+    await emitHarnessPhase(emit, "model_call", "Model call started");
     try {
       resp = await minimaxPost<M27Response>(
         "/v1/text/chatcompletion_v2",
@@ -110,7 +112,19 @@ export async function runAgentLoop(params: {
         },
         120_000 // 2-minute per-call timeout
       );
+      await emitHarnessPhase(
+        emit,
+        "model_call",
+        "Model call completed",
+        Date.now() - modelCallStartedAt
+      );
     } catch (err) {
+      await emitHarnessPhase(
+        emit,
+        "model_call",
+        "Model call failed",
+        Date.now() - modelCallStartedAt
+      );
       // If we already made file changes, treat this as done rather than an error.
       // M2.7 sometimes drops the final "summary" call after all tools succeed.
       if (filesChanged.size > 0) {
@@ -151,10 +165,26 @@ export async function runAgentLoop(params: {
 
       await emitToolCallStart(emit, tc.id, toolName, args);
 
+      const projectionStartedAt = Date.now();
+      await emitHarnessPhase(emit, "tool_projection", "Tool projection started");
       const streamedPreview = await streamProjectedToolUpdate(toolName, args, store, emit);
+      await emitHarnessPhase(
+        emit,
+        "tool_projection",
+        streamedPreview ? "Tool projection completed" : "Tool projection skipped",
+        Date.now() - projectionStartedAt
+      );
 
       // Run the tool
+      const executionStartedAt = Date.now();
+      await emitHarnessPhase(emit, "tool_execution", "Tool execution started");
       const result = await executeTool(toolName, args, store, emit);
+      await emitHarnessPhase(
+        emit,
+        "tool_execution",
+        "Tool execution completed",
+        Date.now() - executionStartedAt
+      );
 
       // If a file changed, stream it to the client immediately
       if (result.fileUpdate) {

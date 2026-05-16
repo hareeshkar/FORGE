@@ -84,6 +84,12 @@ export type ForgeSSEEvent =
   | { type: "search_done"; query: string; resultCount: number }
   | { type: "research_ready"; queries: string[]; searchContext: string }
   | { type: "generating"; message: string }
+  | {
+      type: "harness_phase";
+      phase: "model_call" | "tool_projection" | "tool_execution" | "diagnostic_wait" | "repair_pass";
+      message: string;
+      elapsedMs?: number;
+    }
   | { type: "file_stream_start"; file: ProjectFile }
   | { type: "file_stream_chunk"; fileName: string; chunk: string }
   | { type: "file_stream_done"; file: ProjectFile }

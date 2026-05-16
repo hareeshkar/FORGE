@@ -90,6 +90,24 @@ test("agent loop preserves MiniMax reasoning in model history only", () => {
   assert.doesNotMatch(agentLoop, /summary\s*=\s*message\.content\?\.trim\(\)\s*\|\|\s*summary/);
 });
 
+test("harness emits phase timing events for production observability", () => {
+  const types = read("src/lib/types.ts");
+  const events = read("src/server/minimax/harnessEvents.ts");
+  const agentLoop = read("src/server/minimax/agentLoop.ts");
+  const hook = read("src/hooks/useGenerate.ts");
+
+  assert.match(types, /type:\s*"harness_phase"/);
+  assert.match(types, /phase:\s*"model_call"\s*\|\s*"tool_projection"\s*\|\s*"tool_execution"\s*\|\s*"diagnostic_wait"\s*\|\s*"repair_pass"/);
+  assert.match(types, /elapsedMs\?:\s*number/);
+  assert.match(events, /type:\s*"harness_phase"/);
+  assert.doesNotMatch(events, /emitHarnessPhase[\s\S]*type:\s*"generating"/);
+  assert.match(agentLoop, /Date\.now\(\)/);
+  assert.match(agentLoop, /emitHarnessPhase\(emit,\s*"model_call"/);
+  assert.match(agentLoop, /emitHarnessPhase\(emit,\s*"tool_projection"/);
+  assert.match(agentLoop, /emitHarnessPhase\(emit,\s*"tool_execution"/);
+  assert.match(hook, /case "harness_phase"/);
+});
+
 test("agent streams projected tool edits as soon as tool args arrive", () => {
   const agentLoop = read("src/server/minimax/agentLoop.ts");
   const projection = read("src/server/minimax/toolProjection.ts");

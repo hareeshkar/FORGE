@@ -1,12 +1,18 @@
 import type { ForgeSSEEvent, ProjectFile } from "@/lib/types";
 
 type Emit = (event: ForgeSSEEvent) => Promise<void>;
+type HarnessPhase = Extract<ForgeSSEEvent, { type: "harness_phase" }>["phase"];
 
 const STREAM_CHUNK_SIZE = 480;
 const STREAM_CHUNK_DELAY_MS = 8;
 
-export async function emitHarnessPhase(emit: Emit, message: string): Promise<void> {
-  await emit({ type: "generating", message });
+export async function emitHarnessPhase(
+  emit: Emit,
+  phase: HarnessPhase,
+  message: string,
+  elapsedMs?: number
+): Promise<void> {
+  await emit({ type: "harness_phase", phase, message, elapsedMs });
 }
 
 export async function emitToolCallStart(

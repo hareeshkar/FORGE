@@ -157,6 +157,9 @@ function handleEvent(
     case "generating":
       onChatMessage({ content: event.message, role: "system" });
       break;
+    case "harness_phase":
+      // Observability-only for now; avoid chat spam until a debug UI exists.
+      break;
     case "file_stream_start":
       streamBuffers.set(event.file.name, event.file);
       onFileStreamUpdate?.(event.file);

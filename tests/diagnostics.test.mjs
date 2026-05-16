@@ -8,6 +8,7 @@ const repairPrompt = await loadTsModule("../src/lib/diagnostics/repairPrompt.ts"
 const editTools = await loadTsModule("../src/server/minimax/tools.ts");
 const toolProjection = await loadTsModule("../src/server/minimax/toolProjection.ts");
 const agentLoop = await loadTsModule("../src/server/minimax/agentLoop.ts");
+const harnessEvents = await loadTsModule("../src/server/minimax/harnessEvents.ts");
 
 const file = (name, content, language = "javascript") => ({ name, content, language });
 
@@ -88,6 +89,28 @@ test("display summary strips MiniMax reasoning blocks", () => {
     agentLoop.sanitizeDisplaySummary("Intro <think>private\nreasoning</think> Done"),
     "Intro Done"
   );
+});
+
+test("harness phase helper emits private timing events", async () => {
+  const emitted = [];
+
+  await harnessEvents.emitHarnessPhase(
+    async (event) => {
+      emitted.push(event);
+    },
+    "model_call",
+    "Model call complete",
+    42
+  );
+
+  assert.deepEqual(emitted, [
+    {
+      type: "harness_phase",
+      phase: "model_call",
+      message: "Model call complete",
+      elapsedMs: 42,
+    },
+  ]);
 });
 
 test("diagnostic status resolves clean after Sandpack settle timeout", async () => {
