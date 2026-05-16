@@ -169,7 +169,6 @@ function handleEvent(
     case "file_stream_start":
       flushPendingStreamUpdates();
       streamBuffers.set(event.file.name, event.file);
-      onFileStreamUpdate?.(event.file);
       break;
     case "file_stream_chunk": {
       const prev = streamBuffers.get(event.fileName);

@@ -169,6 +169,17 @@ test("final streamed file events flush pending chunks before final content", () 
   assert.doesNotMatch(hook, /case "file_stream_chunk"[\s\S]*onFileStreamUpdate\?\(next\)/);
 });
 
+test("stream start buffers without rendering an empty editor frame", () => {
+  const hook = read("src/hooks/useGenerate.ts");
+  const startCase = hook.slice(
+    hook.indexOf('case "file_stream_start"'),
+    hook.indexOf('case "file_stream_chunk"')
+  );
+
+  assert.match(startCase, /streamBuffers\.set\(event\.file\.name, event\.file\)/);
+  assert.doesNotMatch(startCase, /onFileStreamUpdate/);
+});
+
 test("code editor shows a non-blocking live streaming state", () => {
   const editor = read("src/components/editor/CodeEditor.tsx");
 
