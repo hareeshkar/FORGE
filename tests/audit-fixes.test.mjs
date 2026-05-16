@@ -48,12 +48,46 @@ test("project persistence is debounced instead of per keystroke", () => {
 test("agent streams file content chunks before final file update", () => {
   const types = read("src/lib/types.ts");
   const agentLoop = read("src/server/minimax/agentLoop.ts");
+  const events = read("src/server/minimax/harnessEvents.ts");
 
   assert.match(types, /type:\s*"file_stream_start"/);
   assert.match(types, /type:\s*"file_stream_chunk"/);
   assert.match(types, /type:\s*"file_stream_done"/);
-  assert.match(agentLoop, /await streamFileUpdate\(/);
-  assert.match(agentLoop, /type:\s*"file_stream_chunk"/);
+  assert.match(agentLoop, /await emitFileStream\(/);
+  assert.match(agentLoop, /emitFileStream/);
+  assert.match(events, /type:\s*"file_stream_start"/);
+  assert.match(events, /type:\s*"file_stream_chunk"/);
+  assert.match(events, /type:\s*"file_stream_done"/);
+  assert.ok(
+    events.indexOf('type: "file_stream_start"') < events.indexOf('type: "file_stream_chunk"')
+  );
+  assert.ok(
+    events.indexOf('type: "file_stream_chunk"') < events.indexOf('type: "file_stream_done"')
+  );
+  assert.doesNotMatch(agentLoop, /type:\s*"file_stream_chunk"/);
+});
+
+test("agent loop uses typed harness event helpers", () => {
+  const events = read("src/server/minimax/harnessEvents.ts");
+  const agentLoop = read("src/server/minimax/agentLoop.ts");
+
+  assert.match(events, /emitToolCallStart/);
+  assert.match(events, /emitToolCallResult/);
+  assert.match(events, /emitFileStream/);
+  assert.match(events, /emitFileUpdate/);
+  assert.match(events, /emitHarnessPhase/);
+  assert.match(agentLoop, /emitFileUpdate/);
+  assert.doesNotMatch(agentLoop, /Agent is calling MiniMax/);
+  assert.doesNotMatch(agentLoop, /type:\s*"file_update"/);
+  assert.doesNotMatch(agentLoop, /type:\s*"file_stream_chunk"/);
+});
+
+test("agent loop preserves MiniMax reasoning in model history only", () => {
+  const agentLoop = read("src/server/minimax/agentLoop.ts");
+
+  assert.match(agentLoop, /content:\s*message\.content\s*\?\?\s*""/);
+  assert.match(agentLoop, /summary\s*=\s*sanitizeDisplaySummary\(message\.content\s*\?\?\s*""\)\s*\|\|\s*summary/);
+  assert.doesNotMatch(agentLoop, /summary\s*=\s*message\.content\?\.trim\(\)\s*\|\|\s*summary/);
 });
 
 test("agent streams projected tool edits as soon as tool args arrive", () => {

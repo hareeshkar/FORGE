@@ -6,6 +6,7 @@ const diagnostics = await loadTsModule("../src/lib/diagnostics/staticChecks.ts")
 const fingerprinting = await loadTsModule("../src/lib/diagnostics/fingerprint.ts");
 const repairPrompt = await loadTsModule("../src/lib/diagnostics/repairPrompt.ts");
 const editTools = await loadTsModule("../src/server/minimax/tools.ts");
+const agentLoop = await loadTsModule("../src/server/minimax/agentLoop.ts");
 
 const file = (name, content, language = "javascript") => ({ name, content, language });
 
@@ -78,6 +79,14 @@ test("repair prompt includes blocking diagnostics and FORGE constraints", () => 
   assert.match(prompt, /Do not add npm dependencies/);
   assert.match(prompt, /Parcel rules/);
   assert.match(prompt, /Current authored files: index\.html, styles\.css, app\.js/);
+});
+
+test("display summary strips MiniMax reasoning blocks", () => {
+  assert.equal(agentLoop.sanitizeDisplaySummary("<think>secret</think> Built app"), "Built app");
+  assert.equal(
+    agentLoop.sanitizeDisplaySummary("Intro <think>private\nreasoning</think> Done"),
+    "Intro Done"
+  );
 });
 
 test("diagnostic status resolves clean after Sandpack settle timeout", async () => {

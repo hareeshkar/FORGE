@@ -1,5 +1,6 @@
-import type { ForgeSSEEvent, ProjectFile } from "@/lib/types";
+import type { ForgeSSEEvent } from "@/lib/types";
 import { minimaxPost } from "./client";
+import { emitFileStream, emitFileUpdate, emitToolCallResult, emitToolCallStart } from "./harnessEvents";
 import { executeTool, FORGE_TOOLS, projectToolFileUpdate, ProjectFileStore } from "./tools";
 
 // ---------------------------------------------------------------------------
@@ -31,9 +32,6 @@ type M27Response = {
 };
 
 type Emit = (event: ForgeSSEEvent) => Promise<void>;
-
-const STREAM_CHUNK_SIZE = 480;
-const STREAM_CHUNK_DELAY_MS = 8;
 
 // ---------------------------------------------------------------------------
 // System prompt — defines FORGE's coding conventions for the agent
@@ -71,6 +69,13 @@ export type AgentLoopResult = {
   summary: string;
   filesChanged: string[];
 };
+
+export function sanitizeDisplaySummary(content: string): string {
+  return content
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
 
 export async function runAgentLoop(params: {
   userMessage: string;
@@ -129,7 +134,7 @@ export async function runAgentLoop(params: {
 
     // ── No tool calls → agent is done ────────────────────────────────────────
     if (finish_reason === "stop" || !message.tool_calls?.length) {
-      summary = message.content?.trim() || summary;
+      summary = sanitizeDisplaySummary(message.content ?? "") || summary;
       break;
     }
 
@@ -143,13 +148,7 @@ export async function runAgentLoop(params: {
         // malformed JSON args — leave empty, executor will return error
       }
 
-      // Tell the client what the agent is about to do
-      await emit({
-        type: "tool_call_start",
-        callId: tc.id,
-        toolName,
-        args,
-      });
+      await emitToolCallStart(emit, tc.id, toolName, args);
 
       const streamedPreview = await streamProjectedToolUpdate(toolName, args, store, emit);
 
@@ -159,23 +158,22 @@ export async function runAgentLoop(params: {
       // If a file changed, stream it to the client immediately
       if (result.fileUpdate) {
         if (!streamedPreview) {
-          await streamFileUpdate(result.fileUpdate, emit);
+          await emitFileStream(emit, result.fileUpdate);
         }
-        await emit({ type: "file_update", file: result.fileUpdate });
+        await emitFileUpdate(emit, result.fileUpdate);
         filesChanged.add(result.fileUpdate.name);
       }
 
-      // Tell the client what happened
-      await emit({
-        type: "tool_call_result",
-        callId: tc.id,
-        ok: result.ok,
-        summary: result.ok
+      await emitToolCallResult(
+        emit,
+        tc.id,
+        result.ok,
+        result.ok
           ? result.fileUpdate
             ? `${result.fileUpdate.name} updated`
             : result.content.slice(0, 80)
-          : result.content.slice(0, 100),
-      });
+          : result.content.slice(0, 100)
+      );
 
       // Feed result back to M2.7 for next round
       messages.push({
@@ -201,30 +199,10 @@ async function streamProjectedToolUpdate(
     case "replace_strings": {
       const preview = projectToolFileUpdate(toolName, args, store);
       if (!preview.ok) return false;
-      await streamFileUpdate(preview.file, emit);
+      await emitFileStream(emit, preview.file);
       return true;
     }
     default:
       return false;
   }
-}
-
-async function streamFileUpdate(file: ProjectFile, emit: Emit): Promise<void> {
-  await emit({
-    type: "file_stream_start",
-    file: { ...file, content: "" },
-  });
-
-  for (let i = 0; i < file.content.length; i += STREAM_CHUNK_SIZE) {
-    await emit({
-      type: "file_stream_chunk",
-      fileName: file.name,
-      chunk: file.content.slice(i, i + STREAM_CHUNK_SIZE),
-    });
-    if (i + STREAM_CHUNK_SIZE < file.content.length) {
-      await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DELAY_MS));
-    }
-  }
-
-  await emit({ type: "file_stream_done", file });
 }
